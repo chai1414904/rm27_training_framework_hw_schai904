@@ -28,8 +28,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
+# Enable CMake support for ASM, C and C++ languages
+enable_language(C CXX ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
@@ -44,12 +44,35 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
+    # bsp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bsp/src/bsp.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bsp/src/bsp_can.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bsp/src/bsp_pwm.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bsp/src/bsp_usart.cpp
+
+    # libs
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/src/crc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/src/math.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/src/pid.cpp
+
+    # modules
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modules/src/BMI088.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modules/src/DJIMotorHandler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modules/src/LED.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modules/src/M2006.cpp
+
+    # threads
+    ${CMAKE_CURRENT_SOURCE_DIR}/../threads/src/alivethread.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../threads/src/controlthread.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../threads/src/imuthread.cpp
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bsp/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../modules/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../threads/include
 )
 
 # Add project symbols (macros)

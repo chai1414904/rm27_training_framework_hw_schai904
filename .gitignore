@@ -1,0 +1,16 @@
+# 构建产物（CubeMX/CMake 生成，不提交）
+board/build/
+build/
+
+# 编译中间文件与固件镜像
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.d
+
+# 编辑器
+.vscode/
+.idea/

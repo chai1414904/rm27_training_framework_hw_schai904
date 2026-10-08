@@ -62,8 +62,12 @@ public:
     uint16_t canId;                   ///< 电机的CAN通信ID
     CAN_HandleTypeDef *hcan;          ///< 指向电机使用的CAN接口的指针
 
-    PID speedPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION); ///< TODO: 配置速度环参数
-    PID positionPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION); ///< TODO: 配置位置环参数
+    /* 下面两组是 M2006 台架实测得到的默认值，顺序为 kp / ki / kd / maxOut / maxIOut：
+     * - 速度环的输出直接就是电流指令，所以 maxOut 是电流上限
+     * - 位置环的输出是速度目标（rad/s），串级时喂给速度环
+     * 换其它电机时由派生类构造函数覆盖，或运行中用 Tuning() 在线重调。 */
+    PID speedPid = PID(150.0f, 0.0f, 0.0f, 5000.0f, 1000.0f, PID_POSITION);    ///< 速度环参数
+    PID positionPid = PID(150.0f, 0.0f, 0.2f, 5000.0f, 1000.0f, PID_POSITION); ///< 位置环参数
 
     float speedSet;    ///< 设定的目标速度
     float positionSet; ///< 设定的目标位置，范围[-Π, Π]

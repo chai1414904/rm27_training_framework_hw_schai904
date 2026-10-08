@@ -2,6 +2,7 @@
 #define BMI088_HPP
 
 #include "IMU.hpp"
+#include "spi.h" // BMI088 挂在 SPI1 上；同时带出 main.h 里的片选引脚标签
 
 namespace BMI088
 {
@@ -18,7 +19,14 @@ enum BMI088_SENSOR
 };
 
 /*---------------------------硬件连接---------------------------*/
-// TODO: 配置 BMI088 使用的 SPI 句柄，以及加速度计和陀螺仪各自的 GPIO 片选端口、引脚。
+/* BMI088 挂在 SPI1 上：PB3 = SCK，PB4 = MISO，PA7 = MOSI（按 C 板原理图核实）
+ * 片选引脚用 CubeMX 生成的 GPIO 标签，避免在这里硬编码 PA4 / PB0 */
+#define BMI088_SPI_HANDLE hspi1               //< BMI088 使用的 SPI 句柄
+#define BMI088_CS_ACC_PORT CS_ACC_GPIO_Port   //< 加速度计片选端口
+#define BMI088_CS_ACC_PIN CS_ACC_Pin          //< 加速度计片选引脚
+#define BMI088_CS_GYRO_PORT CS_GYRO_GPIO_Port //< 陀螺仪片选端口
+#define BMI088_CS_GYRO_PIN CS_GYRO_Pin        //< 陀螺仪片选引脚
+#define BMI088_SPI_TIMEOUT_MS 10U             //< 单次 SPI 传输超时（毫秒）
 
 #define HEATING_RESISTANCE_TIM htim10            //< 加热电阻定时器
 #define HEATING_RESISTANCE_CHANNEL TIM_CHANNEL_1 //< 加热电阻通道

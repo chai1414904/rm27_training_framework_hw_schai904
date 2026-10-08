@@ -102,13 +102,11 @@ public:
 
     /**
      * @brief 验证加速度计数据
-     * @todo 未实现
      */
     virtual void VerifyAccData() = 0;
 
     /**
      * @brief 验证陀螺仪数据
-     * @todo 未实现
      */
     virtual void VerifyGyroData() = 0;
 };

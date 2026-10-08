@@ -60,10 +60,27 @@ namespace BMI088
 
     void cBMI088::TemperatureControl(float target_temp)
     {
-        // TODO: 温度读取完成后，用 TempPid 计算加热占空比并限制到 [0, 1]。
-        // 未完成前保持加热关闭。
-        (void)target_temp;
-        PWM_SetDutyRatio(&HEATING_RESISTANCE_TIM, 0.0f, HEATING_RESISTANCE_CHANNEL);
+        // 本函数自己读温度：acc_data.temperature 没有被任何地方填充，不能依赖它
+        float temp = 0.0f;
+        ReadAccTemperature(&temp);
+
+        TempPid.ref = target_temp;
+        TempPid.fdb = temp;
+        TempPid.UpdateResult();
+
+        // TempPid 的 maxOut 是 25000，量纲不是占空比，所以必须在这里夹到 [0, 1]：
+        // 6G 量程下 25000 相当于"几乎不限幅"，真正的限幅由这一句完成
+        float duty = TempPid.result;
+        if (duty < 0.0f)
+        {
+            duty = 0.0f;
+        }
+        else if (duty > 1.0f)
+        {
+            duty = 1.0f;
+        }
+
+        PWM_SetDutyRatio(&HEATING_RESISTANCE_TIM, duty, HEATING_RESISTANCE_CHANNEL);
     }
 
     void cBMI088::VerifyAccChipID()
@@ -103,33 +120,110 @@ namespace BMI088
 
     void cBMI088::VerifyAccData()
     {
-        // TODO: 检查加速度数据是否有效，并更新 ACC_DATA_ERR。
+        bool bad = false;
+
+        // ① NaN/Inf：一旦进入 PID 的积分项就再也清不掉（NaN + x 恒为 NaN）
+        if (!std::isfinite(acc_data.x) || !std::isfinite(acc_data.y) || !std::isfinite(acc_data.z))
+        {
+            bad = true;
+        }
+        // ② 合加速度过小：真实器件永远至少测到重力，读数接近 0 说明 MISO 恒高/恒低，
+        //    即 SPI 实际没有通。这一条同时能抓到"全 0x00"和"全 0xFF"两种卡死
+        else if (std::sqrt(acc_data.x * acc_data.x + acc_data.y * acc_data.y + acc_data.z * acc_data.z) < 1.0f)
+        {
+            bad = true;
+        }
+
+        // 说明：这里没有做"单轴是否超出量程"的检查——raw 是 int16，
+        // 换算后必然落在量程内，那种检查恒不成立，是无效代码。
+        self_test.ACC_DATA_ERR = bad;
     }
 
     void cBMI088::VerifyGyroData()
     {
-        // TODO: 检查角速度数据是否有效，并更新 GYRO_DATA_ERR。
+        bool bad = false;
+
+        if (!std::isfinite(gyro_data.x) || !std::isfinite(gyro_data.y) || !std::isfinite(gyro_data.z))
+        {
+            bad = true;
+        }
+        else
+        {
+            // 陀螺仪静止时输出接近 0，不能像加速度计那样用"模长过小"判断。
+            // 但结果不应超出量程太多：超出说明零偏异常（例如 Gyro_offset 未被合理初始化）
+            // 或数据已损坏。留 1 rad/s 余量容纳零偏。
+            const float full_scale = 32767.0f * IMU_GYRO_2000_SEN; // 2000°/s ≈ 34.9 rad/s
+
+            if (std::fabs(gyro_data.x) > full_scale + 1.0f ||
+                std::fabs(gyro_data.y) > full_scale + 1.0f ||
+                std::fabs(gyro_data.z) > full_scale + 1.0f)
+            {
+                bad = true;
+            }
+        }
+
+        self_test.GYRO_DATA_ERR = bad;
+    }
+
+    /**
+     * @brief 操作加速度计或陀螺仪的片选
+     * @param cs 片选编号
+     * @param state GPIO_PIN_RESET 选中，GPIO_PIN_SET 释放
+     */
+    static void SelectCS(enum BMI088_SENSOR cs, GPIO_PinState state)
+    {
+        if (cs == BMI088_CS_ACC)
+        {
+            HAL_GPIO_WritePin(BMI088_CS_ACC_PORT, BMI088_CS_ACC_PIN, state);
+        }
+        else
+        {
+            HAL_GPIO_WritePin(BMI088_CS_GYRO_PORT, BMI088_CS_GYRO_PIN, state);
+        }
     }
 
     void cBMI088::WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len)
     {
-        // TODO: 根据 cs 拉低对应 GPIO 片选；按 SPI 写协议发送地址和数据，
-        // 最后释放片选，并处理通信失败与必要的延时。
-        (void)cs;
-        (void)addr;
-        (void)data;
-        (void)len;
+        // 写协议：地址最高位清零，紧跟数据；两步之间片选必须一直保持拉低
+        uint8_t reg = addr & BMI088_SPI_WRITE_CODE;
+
+        SelectCS(cs, GPIO_PIN_RESET);
+        if (HAL_SPI_Transmit(&BMI088_SPI_HANDLE, &reg, 1, BMI088_SPI_TIMEOUT_MS) == HAL_OK)
+        {
+            if (data != nullptr && len > 0U)
+            {
+                (void)HAL_SPI_Transmit(&BMI088_SPI_HANDLE, data, len, BMI088_SPI_TIMEOUT_MS);
+            }
+        }
+        SelectCS(cs, GPIO_PIN_SET);
     }
 
     void cBMI088::ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len)
     {
-        // TODO: 根据 cs 拉低对应 GPIO 片选；按 SPI 读协议发送地址，
-        // 丢弃加速度计返回的首个无效字节，读取 len 字节并释放片选。
-        // 未实现前清零缓冲区，避免芯片 ID 校验读取未初始化数据。
-        (void)cs;
-        (void)addr;
-        if (data != nullptr)
-            for (uint8_t i = 0; i < len; ++i) data[i] = 0;
+        if (data == nullptr || len == 0U)
+        {
+            return;
+        }
+
+        // 先把缓冲区清零：这样通信失败时调用方拿到的是确定的零值，
+        // 而不是未初始化的数据（芯片 ID 校验依赖这一点）
+        for (uint8_t i = 0U; i < len; ++i)
+        {
+            data[i] = 0U;
+        }
+
+        // 读协议：地址最高位置 1，随后原样读 len 字节。
+        // 注意：加速度计在这 len 字节里，第一个是器件吐出的无效字节，
+        //       由调用方丢弃（VerifyAccChipID 取 [1]、ReadAccData 显式跳过）；
+        //       陀螺仪没有这个字节。本函数不做区分，只负责原始传输。
+        uint8_t reg = addr | BMI088_SPI_READ_CODE;
+
+        SelectCS(cs, GPIO_PIN_RESET);
+        if (HAL_SPI_Transmit(&BMI088_SPI_HANDLE, &reg, 1, BMI088_SPI_TIMEOUT_MS) == HAL_OK)
+        {
+            (void)HAL_SPI_Receive(&BMI088_SPI_HANDLE, data, len, BMI088_SPI_TIMEOUT_MS);
+        }
+        SelectCS(cs, GPIO_PIN_SET);
     }
 
     void cBMI088::Config()
@@ -205,22 +299,70 @@ namespace BMI088
 
     void cBMI088::ReadAccData(acc_data_t *data)
     {
-        // TODO: 按 BMI088 加速度计 SPI 协议丢弃首个无效字节，拼接三轴有符号原始值，
-        // 再按配置的量程换算为 m/s²，写入 data。
-        if (data != nullptr) *data = {};
+        if (data == nullptr)
+        {
+            return;
+        }
+        *data = {};
+
+        // 加速度计在地址之后会多吐一个无效字节，所以要多读一个：
+        // raw[0] 丢弃，raw[1..2]=X，raw[3..4]=Y，raw[5..6]=Z，每轴低字节在前
+        uint8_t raw[ACC_XYZ_LEN + 1];
+        ReadReg(BMI088_CS_ACC, ACC_X_LSB_ADDR, raw, ACC_XYZ_LEN + 1);
+
+        int16_t raw_x = (int16_t)(((uint16_t)raw[2] << 8) | (uint16_t)raw[1]);
+        int16_t raw_y = (int16_t)(((uint16_t)raw[4] << 8) | (uint16_t)raw[3]);
+        int16_t raw_z = (int16_t)(((uint16_t)raw[6] << 8) | (uint16_t)raw[5]);
+
+        // IMU_ACCEL_6G_SEN 已经把 g 换算进去了，单位是 m/s²/LSB
+        data->x = (float)raw_x * IMU_ACCEL_6G_SEN;
+        data->y = (float)raw_y * IMU_ACCEL_6G_SEN;
+        data->z = (float)raw_z * IMU_ACCEL_6G_SEN;
     }
 
     void cBMI088::ReadGyroData(gyro_data_t *data)
     {
-        // TODO: 读取并拼接陀螺仪三轴原始值，按配置量程换算为 rad/s，
-        // 减去 Gyro_offset 后写入 data。
-        if (data != nullptr) *data = {};
+        if (data == nullptr)
+        {
+            return;
+        }
+        *data = {};
+
+        // 陀螺仪没有无效字节，raw[0..1]=X，raw[2..3]=Y，raw[4..5]=Z，每轴低字节在前
+        uint8_t raw[GYRO_XYZ_LEN];
+        ReadReg(BMI088_CS_GYRO, GYRO_RATE_X_LSB_ADDR, raw, GYRO_XYZ_LEN);
+
+        int16_t raw_x = (int16_t)(((uint16_t)raw[1] << 8) | (uint16_t)raw[0]);
+        int16_t raw_y = (int16_t)(((uint16_t)raw[3] << 8) | (uint16_t)raw[2]);
+        int16_t raw_z = (int16_t)(((uint16_t)raw[5] << 8) | (uint16_t)raw[4]);
+
+        // IMU_GYRO_2000_SEN 单位是 rad/s/LSB；Gyro_offset 由 Calibrate() 得到，同为 rad/s
+        data->x = (float)raw_x * IMU_GYRO_2000_SEN - Gyro_offset[0];
+        data->y = (float)raw_y * IMU_GYRO_2000_SEN - Gyro_offset[1];
+        data->z = (float)raw_z * IMU_GYRO_2000_SEN - Gyro_offset[2];
     }
 
     void cBMI088::ReadAccTemperature(float *temp)
     {
-        // TODO: 丢弃加速度计读取时的首个无效字节，解析 11 位有符号温度并换算为摄氏度。
-        if (temp != nullptr) *temp = 0.0f;
+        if (temp == nullptr)
+        {
+            return;
+        }
+        *temp = 0.0f;
+
+        // 0x22 与 0x23 地址连续，一次读回来才能保证两个字节来自同一次采样：
+        // 分两次读有可能读到跨采样点的拼接值。raw[0] 无效，raw[1]=MSB，raw[2]=LSB
+        uint8_t raw[TEMP_LEN + 1];
+        ReadReg(BMI088_CS_ACC, TEMP_MSB_ADDR, raw, TEMP_LEN + 1);
+
+        // MSB 是温度高 8 位，LSB 的高 3 位补在低位，合成 11 位有符号量
+        int16_t value = (int16_t)(((uint16_t)raw[1] << 3) | ((uint16_t)raw[2] >> 5));
+        if (value > 1023)
+        {
+            value = (int16_t)(value - 2048); // 11 位补码 → 符号扩展到 16 位
+        }
+
+        *temp = (float)value * TEMP_UNIT + TEMP_BIAS;
     }
 
 }

@@ -19,9 +19,26 @@ void PID::UpdateResult()
     err[1] = err[0];
     err[0] = ref - fdb;
 
-    // TODO: 按 mode 实现位置式或增量式 PID，并限制积分和最终输出。
-    // 完成前始终保持零输出。
-    pResult = iResult = dResult = result = 0.0f;
+    if (mode == PID_POSITION)
+    {
+        // 位置式：直接算出本次应有的输出绝对值
+        pResult = kp * err[0];
+        iResult += ki * err[0];
+        dResult = kd * (err[0] - err[1]);
+
+        iResult = Numeric::LimitABS(iResult, maxIOut);                  // 积分限幅，防止积分饱和
+        result = Numeric::LimitABS(pResult + iResult + dResult, maxOut); // 输出限幅，保护执行器
+    }
+    else
+    {
+        // 增量式：算出的是"本次相对上次要增加多少"，再累加到上次输出上
+        pResult = kp * (err[0] - err[1]);
+        iResult = ki * err[0];
+        dResult = kd * (err[0] - 2.0f * err[1] + err[2]);
+
+        // 增量式没有积分累加器，天然不会积分饱和，只需限制累加后的输出
+        result = Numeric::LimitABS(result + pResult + iResult + dResult, maxOut);
+    }
 }
 
 void PID::Clear()

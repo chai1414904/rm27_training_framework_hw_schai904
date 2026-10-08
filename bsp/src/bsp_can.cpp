@@ -1,4 +1,5 @@
 #include "bsp_can.hpp"
+#include "DJIMotorHandler.hpp"
 
 extern CAN_HandleTypeDef hcan1;
 extern CAN_HandleTypeDef hcan2;
@@ -41,10 +42,39 @@ void CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Id, uint8_t *msg, uint16_t l
         // Monitor::instance()->Log_Messages(Monitor::WARNING, (uint8_t *)"CAN Tx Mailbox is full\r\n");
         return;
     }
-    // TODO: 校验标准帧 ID 和 DLC (0~8)，构造帧头并调用 HAL_CAN_AddTxMessage。
-    (void)Id;
-    (void)msg;
-    (void)len;
+
+    // 只发标准数据帧：ID 超出 11 位或数据超过 8 字节说明调用方传错了，直接丢弃
+    if (Id > 0x7FFU || len > 8U)
+    {
+        return;
+    }
+
+    CAN_TxHeaderTypeDef txHeader = {};
+    txHeader.StdId = Id;
+    txHeader.ExtId = 0;
+    txHeader.IDE = CAN_ID_STD;
+    txHeader.RTR = CAN_RTR_DATA;
+    txHeader.DLC = len;
+
+    uint32_t txMailbox = 0;
+    (void)HAL_CAN_AddTxMessage(hcan, &txHeader, msg, &txMailbox);
 }
 
-// TODO: 实现 CAN 接收回调，根据总线和标准帧 ID 分发电机反馈。
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+    CAN_RxHeaderTypeDef rxHeader;
+    uint8_t rxData[8];
+
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK)
+    {
+        return;
+    }
+
+    // 只有 DJI 电机反馈帧（0x201~0x208）交给电机管理器，其余帧本层不处理
+    if (rxHeader.IDE != CAN_ID_STD || rxHeader.StdId < 0x201U || rxHeader.StdId > 0x208U)
+    {
+        return;
+    }
+
+    DJIMotorHandler::Instance()->updateFeedback(hcan, rxData, (int)(rxHeader.StdId - 0x201U));
+}
