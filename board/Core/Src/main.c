@@ -29,7 +29,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "bsp.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -104,7 +104,9 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  // 启动 CAN（HAL_CAN_Start + RX 中断）、PWM（三路定时器计数），并清理串口残留标志。
+  // 必须在 MX_ThreadX_Init() 之前：线程一创建就会用到 CAN 与 PWM。
+  bsp_Init();
   /* USER CODE END 2 */
 
   MX_ThreadX_Init();
