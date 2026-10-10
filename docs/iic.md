@@ -56,3 +56,38 @@ I²C **没有 CS 线**，它靠 **SDA 上的地址字节**来选设备：
 - 循环传完 8 位，再传 ACK（**ACK 也是一位**，第 9 个时钟）
 
 数据位**最高位先发（MSB first）**：先发 bit7，最后发 bit0。
+
+## 本工程的 I2C3 配置
+
+| 项 | 值 | 它实际改的是 | 为什么这么选 |
+| --- | --- | --- | --- |
+| Instance | I2C3 | 用哪个 I²C 外设 | IST8310 接在 I2C3 上 |
+| ClockSpeed | **400 kHz** | SCL 的速率 | 快速模式（100 k = 标准，400 k = Fast）|
+| DutyCycle | 2:1 | 快速模式下 SCL 高/低的时间比例 | 标准值 |
+| AddressingMode | 7 位 | 地址宽度 | IST8310 是 7 位地址 **0x0E** |
+| OwnAddress1 | 0 | 自己的地址 | **主机不需要地址** ⇒ 填 0 |
+| DualAddressMode | 关 | 双地址（从机功能）| 主机用不到 |
+| GeneralCallMode | 关 | 广播（所有从机一起听）| 用不到 |
+| NoStretchMode | 关 | **允许时钟拉伸** | 允许从机拉低 SCL 说"等一下" |
+
+**引脚**：
+
+| 引脚 | 信号 | 模式 |
+| --- | --- | --- |
+| **PA8** | SCL | **复用开漏** |
+| **PC9** | SDA | **复用开漏** |
+| **PG3** | DRDY_IST8310 | 普通 GPIO（传感器 → MCU）|
+| **PG6** | RSTN_IST8310 | 普通 GPIO（MCU → 传感器）|
+
+代码里就是这一行（`board/Core/Src/i2c.c` 的 MspInit）：
+
+```c
+GPIO_InitStruct.Mode      = GPIO_MODE_AF_OD;   // 复用【开漏】
+GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
+```
+
+**开漏不是可选项**：I²C 靠"线与"让多个设备共用一根线，
+所以 SDA / SCL 必须**只能拉低、不能推高** —— 这正是 `AF_OD` 的含义。
+
+> **对照 SPI**：SPI 的引脚是**复用推挽（AF_PP）**，因为它**不需要线与**
+> （CS 保证同一时刻只有一个从机驱动 MISO）。
