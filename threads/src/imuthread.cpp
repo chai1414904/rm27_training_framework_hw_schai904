@@ -27,6 +27,9 @@ void ImuThreadEntry(ULONG input)
 
     // 1. 配置：写量程/带宽等寄存器，并校验两颗芯片的 ID（失败会置 INIT_ERR）
     s_imu.Config();
+    // ID 校验不会自己发生：不调用它，INIT_ERR 会一直保持默认的 true
+    s_imu.VerifyAccChipID();
+    s_imu.VerifyGyroChipID();
 
     // 2. 陀螺零偏标定。内部每次采样都会 sleep 一个 tick，所以耗时由
     //    tick 频率和标定次数共同决定（1 kHz 下 4000 次约 4 秒）

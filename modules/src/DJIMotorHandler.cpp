@@ -7,7 +7,7 @@ extern CAN_HandleTypeDef hcan2;
 namespace
 {
 /// DJI 电机反馈帧 ID：0x201~0x208 对应 8 个槽位
-constexpr uint16_t kFeedbackIdBase = 0x201U;
+constexpr uint16_t kFeedbackIdBase = 0x201U; 
 constexpr uint16_t kFeedbackIdMax = 0x208U;
 
 /// 转子编码器为 13 位，一圈 8192 个计数
@@ -20,7 +20,7 @@ constexpr float kTwoPi = 6.283185307179586f;
  * @brief 减速箱速比（转子转数 : 输出轴转数）
  * @note  速比取自前序工程已验证的常数表：M2006 = 36、M3508 = 3591/187、XRoll = 268/17
  */
-float GearRatio(GearBox gearBox)
+float GearRatio(GearBox gearBox)// // ★ 速比表
 {
     switch (gearBox)
     {
@@ -40,7 +40,7 @@ float GearRatio(GearBox gearBox)
  * @brief 把 CAN 句柄映射成总线号
  * @return true 表示是本板使用的 CAN，bus 被写入
  */
-bool BusOf(CAN_HandleTypeDef *hcan, uint8_t *bus)
+bool BusOf(CAN_HandleTypeDef *hcan, uint8_t *bus)  // 指针比较 ⇒ 唯一的识别办法 ✓
 {
     if (hcan == &hcan1) { *bus = 0U; return true; }
     if (hcan == &hcan2) { *bus = 1U; return true; }
@@ -74,9 +74,9 @@ void DJIMotorHandler::registerMotor(DJIMotor *motor, CAN_HandleTypeDef *hcan, ui
         if (bus == 0U) { CAN1_0x1FF_Exist = true; }
         else           { CAN2_0x1FF_Exist = true; }
     }
-}
+}//一条CAN总线上最多可以挂8个大疆电机，但受限于CAN一帧只能发8个字节，而一个电机电流需要2个字节，所以一帧最多只能控制4个电机
 
-void DJIMotorHandler::sendControlData()
+void DJIMotorHandler::sendControlData()//
 {
     uint8_t *const frames[2][2] = {
         {can1_send_data_0, can1_send_data_1},

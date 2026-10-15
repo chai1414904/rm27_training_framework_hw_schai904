@@ -14,6 +14,11 @@ static UCHAR s_control_stack[kControlStackSize];
 static M2006 s_m2006;
 static DJIMotorHandler *const s_handler = DJIMotorHandler::Instance();
 
+/* 调试开关：控制模式放在这里，便于按 V3 的要求【分别】验证三种模式。
+ * 默认 RELAX_MODE —— 上电不出力，这是第一次上电唯一安全的默认值。
+ * 用调试器改这个变量即可切换：0 = RELAX（松开）、1 = SPD（速度环）、2 = POS（双环）。 */
+static volatile M2006::MotorControlModeType g_controlMode = M2006::RELAX_MODE;
+
 void CreateControlThread(void)
 {
     (void)tx_thread_create(&s_control_thread, (CHAR *)"control", ControlThreadEntry, 0,
@@ -29,9 +34,9 @@ void ControlThreadEntry(ULONG input)
     s_handler->registerMotor(&s_m2006, &hcan1, kMotorCanId);
 
     // 位置模式走的是"位置环套速度环"，也就是题目说的双环。
-    // positionSet 给 0：上电后保持住开机时输出轴所在的位置。
-    // 想让它动，把 positionSet 改成比如 0.5f（单位 rad，输出轴）。
-    s_m2006.controlMode = M2006::POS_MODE;
+    // positionSet 给 0：位置模式下保持住开机时输出轴所在的位置。
+    // 但模式由 g_controlMode 决定，默认先松开，确认反馈正常后再切换。
+    s_m2006.controlMode = g_controlMode;
     s_m2006.positionSet = 0.0f;
 
     while (true)
@@ -52,7 +57,7 @@ void ControlThreadEntry(ULONG input)
         }
         else
         {
-            s_m2006.controlMode = M2006::POS_MODE;
+            s_m2006.controlMode = g_controlMode;
         }
 
         // 心跳：告诉 alive 线程"我还活着"

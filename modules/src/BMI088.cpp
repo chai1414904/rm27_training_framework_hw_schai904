@@ -98,6 +98,36 @@ namespace BMI088
         else if (pRxData[1] == ACC_CHIP_ID_VAL)
         {
             self_test.ACC_CHIP_ID_ERR = false;
+            self_test.INIT_ERR = false;
+
+            // 把加速度计的三个关键配置读回来核对。必须放在清 INIT_ERR 之后，
+            // 否则读回失败会被后面的成功覆盖掉。
+            // 为什么这三个都要查 —— 加速度计要出数据，三步缺一不可：
+            //   ① PWR_CTRL = 0x04（上电）
+            //   ② PWR_CONF = 0x00（active；0x03 是 suspend）
+            //   ③ ACC_CONF 的 ODR 有效（0xAB = 800 Hz / normal）
+            // 少任何一步，数据寄存器都恒为 0，而芯片 ID 和温度照样读得到 ——
+            // 这正是真机上看到的现象（acc 全 0、温度 22.4 °C、陀螺仪正常）。
+            uint8_t pRxCheck[2] = {0U, 0U};
+
+            ReadReg(BMI088_CS_ACC, ACC_PWR_CTRL_ADDR, pRxCheck, 2);
+            if (pRxCheck[1] != ACC_PWR_CTRL_ON)
+            {
+                self_test.INIT_ERR = true;
+            }
+
+            ReadReg(BMI088_CS_ACC, ACC_PWR_CONF_ADDR, pRxCheck, 2);
+            if (pRxCheck[1] != ACC_PWR_CONF_ACT)
+            {
+                self_test.INIT_ERR = true;
+            }
+
+            const uint8_t kAccConfExpect = 0xAB; //< 与 Config() 写进 ACC_CONF 的值一致
+            ReadReg(BMI088_CS_ACC, ACC_CONF_ADDR, pRxCheck, 2);
+            if (pRxCheck[1] != kAccConfExpect)
+            {
+                self_test.INIT_ERR = true;
+            }
         }
     }
 
@@ -115,6 +145,7 @@ namespace BMI088
         else if (pRxData == GYRO_CHIP_ID_VAL)
         {
             self_test.GYRO_CHIP_ID_ERR = false;
+            self_test.INIT_ERR = false;
         }
     }
 
@@ -184,16 +215,25 @@ namespace BMI088
 
     void cBMI088::WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len)
     {
-        // 写协议：地址最高位清零，紧跟数据；两步之间片选必须一直保持拉低
-        uint8_t reg = addr & BMI088_SPI_WRITE_CODE;
+        // 写协议：地址最高位清零，紧跟数据；两步之间片选必须一直保持拉低。
+        // 地址和数据必须【一次连续传输】发完：若拆成两次 HAL_SPI_Transmit，
+        // HAL 在每次调用结束都会 __HAL_SPI_DISABLE，两次之间那次 SPE 0→1
+        // 的切换可能在 SCK 上留下多余边沿，被从机当成额外的时钟位。
+        uint8_t buf[8];
+        if (data == nullptr || len == 0U || (len + 1U) > sizeof(buf))
+        {
+            return;
+        }
+        buf[0] = addr & BMI088_SPI_WRITE_CODE;
+        for (uint8_t i = 0U; i < len; ++i)
+        {
+            buf[i + 1U] = data[i];
+        }
 
         SelectCS(cs, GPIO_PIN_RESET);
-        if (HAL_SPI_Transmit(&BMI088_SPI_HANDLE, &reg, 1, BMI088_SPI_TIMEOUT_MS) == HAL_OK)
+        if (HAL_SPI_Transmit(&BMI088_SPI_HANDLE, buf, (uint16_t)(len + 1U), BMI088_SPI_TIMEOUT_MS) != HAL_OK)
         {
-            if (data != nullptr && len > 0U)
-            {
-                (void)HAL_SPI_Transmit(&BMI088_SPI_HANDLE, data, len, BMI088_SPI_TIMEOUT_MS);
-            }
+            self_test.INIT_ERR = true;
         }
         SelectCS(cs, GPIO_PIN_SET);
     }
@@ -221,7 +261,14 @@ namespace BMI088
         SelectCS(cs, GPIO_PIN_RESET);
         if (HAL_SPI_Transmit(&BMI088_SPI_HANDLE, &reg, 1, BMI088_SPI_TIMEOUT_MS) == HAL_OK)
         {
-            (void)HAL_SPI_Receive(&BMI088_SPI_HANDLE, data, len, BMI088_SPI_TIMEOUT_MS);
+            if (HAL_SPI_Receive(&BMI088_SPI_HANDLE, data, len, BMI088_SPI_TIMEOUT_MS) != HAL_OK)
+            {
+                self_test.INIT_ERR = true;
+            }
+        }
+        else
+        {
+            self_test.INIT_ERR = true;
         }
         SelectCS(cs, GPIO_PIN_SET);
     }
@@ -231,6 +278,11 @@ namespace BMI088
         tx_thread_sleep(10); //< 等待系统稳定
 
         /*-------------------------------------加速度计初始化-------------------------------------*/
+        /* 写顺序按 Bosch 官方驱动 BMI08x_SensorAPI 的 bmi08a_set_power_mode / set_meas_conf：
+         *   软复位 → dummy SPI 读 → PWR_CONF(active) → 5ms → PWR_CTRL(enable) → 量程 → ACC_CONF → 40ms
+         * 先 PWR_CONF 再 PWR_CTRL 是关键：反过来的话 enable 是在芯片还处于 suspend 时写下的，
+         * 寄存器读回是对的，但芯片不会真正开始测量 —— 现象就是数据寄存器恒为 0，
+         * 而芯片 ID 和温度照样读得到。 */
         
         //< 先软重启，清空所有寄存器
         uint8_t pTxData;
@@ -238,24 +290,30 @@ namespace BMI088
         WriteReg(BMI088_CS_ACC, ACC_SOFTRESET_ADDR, &pTxData, 1);
         tx_thread_sleep(100); //< 延时100ms,重启需要时间
 
-        //< 打开加速度计电源
-        pTxData = ACC_PWR_CTRL_ON;
-        WriteReg(BMI088_CS_ACC, ACC_PWR_CTRL_ADDR, &pTxData, 1);
-        tx_thread_sleep(150);
+        //< 软复位后必须补一次 dummy SPI 读：软复位近似一次掉电重启，SPI 接口要重新同步
+        {
+            uint8_t pRxDummy[2] = {0U, 0U};
+            ReadReg(BMI088_CS_ACC, ACC_CHIP_ID_ADDR, pRxDummy, 2);
+        }
 
-        //< 加速度计变成正常模式
+        //< 先把电源模式设为 active，再打开加速度计（顺序不可颠倒）
         pTxData = ACC_PWR_CONF_ACT;
         WriteReg(BMI088_CS_ACC, ACC_PWR_CONF_ADDR, &pTxData, 1);
-        tx_thread_sleep(10); //
+        tx_thread_sleep(5); //< 官方 POWER_CONFIG_DELAY = 5ms
+
+        pTxData = ACC_PWR_CTRL_ON;
+        WriteReg(BMI088_CS_ACC, ACC_PWR_CTRL_ADDR, &pTxData, 1);
+        tx_thread_sleep(5); //< 官方 POWER_CONFIG_DELAY = 5ms
 
         //< 测量范围
         pTxData = ACC_RANGE_6G;
         WriteReg(BMI088_CS_ACC, ACC_RANGE_ADDR, &pTxData, 1);
         tx_thread_sleep(5); //< 延时5ms
 
+        //< 0xAB = BW_NORMAL(0x0A)<<4 | ODR_800Hz(0x0B)，与官方宏取值一致
         pTxData = 0xAB;
         WriteReg(BMI088_CS_ACC, ACC_CONF_ADDR, &pTxData, 1);
-        tx_thread_sleep(5); //< 延时5ms
+        tx_thread_sleep(40); //< 官方 SET_ACCEL_CONF_DELAY = 40ms
 
         pTxData = 0x08;
         WriteReg(BMI088_CS_ACC, INT1_IO_CTRL_ADDR, &pTxData, 1);
